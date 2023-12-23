@@ -194,6 +194,10 @@ class NTFS_Rescuer():
         file_size_sum = 0 
         for iid, rec in inodesdic.items():
             iid = int(iid)
+            if rec["name"] == "":
+                rec["name"] = f"---inode_{iid}---"
+            if rec["parent"] == "":
+                rec["parent"] = f"---empty---"
             if rec["type"] == "Directory":
                 folder = self.Folder(iid=iid, name=rec["name"],  parent_name=rec["parent"])
                 assert iid not in iid_to_folder, iid
@@ -294,24 +298,28 @@ class NTFS_Rescuer():
             repeats = defaultdict(int)
             for f in f_list:
                 if f.name == "":
-                    f.name = f"___inode_{f.iid}___"
+                    f.name = f"---inode_{f.iid}---"
             for f in f_list:
                 while True:
                     n = repeats[f.name]
                     repeats[f.name] += 1
                     if n == 0:
                         break
-                    f.name = f"{f.name}___{n+1}"
+                    f.name = f"{f.name}---{n+1}"
                     
         def update_lists(f):
             for ff in f.subfolders:
                 if ff.name == ".":
-                    ff.name = "___.___"
+                    ff.name = "---.---"
                 if ff.name == "<non-determined>":
-                    ff.name = "___non-determined___"
-            update_names(f.subfolders)
+                    ff.name = "---non-determined---"
+
             f.files = sorted(f.files, reverse=True, key=lambda x: x.date)
             update_names(f.files)
+            f.files = sorted(f.files, key=lambda x: x.name)
+
+            update_names(f.subfolders)
+            f.subfolders = sorted(f.subfolders, key=lambda x: x.name)
             for ff in f.subfolders:
                 update_lists(ff)
         
@@ -334,7 +342,7 @@ class NTFS_Rescuer():
             seen.add(f.iid)
             i += 1 
             print(i, "  " * margin, f.iid, f"'{f.name}'", len(f.files), f.files_size / 1024 / 1024, f.total_files_count, f.total_files_size / 1024 / 1024)
-            for ff in sorted(f.subfolders, key=lambda x:x.name):
+            for ff in f.subfolders:
                 print_structure(ff, margin+1)
 
         for f in root_folders:
@@ -387,11 +395,11 @@ class NTFS_Rescuer():
 try:
     
     sourcedevice="/dev/md1"
-    destfolder = '/mnt/nvme/recover2'
+    destfolder = '/mnt/tmpusb/restore_my'
     inputfile = '/mnt/nvme/scan2.txt'
     jsonfile = '/mnt/nvme/inodes2.json'
     parsedfile = '/mnt/nvme/inodes-filtered2.json'
-    target_sh = '/mnt/nvme/restore.sh'
+    target_sh = '/mnt/tmpusb/restore.sh'
     
     # runtime action
     Rescuer = NTFS_Rescuer(destfolder)
@@ -401,6 +409,7 @@ try:
     Rescuer.print_folders(root_folders, depth=2)
     #Rescuer.create_folders(root_folders, destfolder)
     Rescuer.create_restore_script(sourcedevice, root_folders, destfolder, target_sh)
+    print(f"File {target_sh} created")
 
     
 
