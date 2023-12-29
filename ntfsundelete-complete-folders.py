@@ -21,14 +21,11 @@ class NTFS_Rescuer():
 # postconditions:	
 
     def __init__(self, destfolder):
-        self.destfolder = destfolder
-        self.checkfolder(destfolder)
-    
-    def checkfolder(self, destfolder):
-        directory = destfolder
-        if not os.path.exists(directory):
-            os.makedirs(directory)
-        
+        self.destfolder = Path(destfolder)
+        self.destfolder.mkdir(parents=True, exist_ok=True)
+        self.tmp_folder = self.destfolder / "tmp"
+        self.tmp_folder.mkdir(parents=True, exist_ok=True)
+
     def load_inodes_to_json(self, inputfile, jsonfile):
         
         inodesdic = {}	# dictionary to keep all the inodes
@@ -356,7 +353,7 @@ class NTFS_Rescuer():
             self.create_folders(f.subfolders, fld_full_path)
             
     def create_restore_script(self, sourcedevice, root_folders, destfolder, target_sh):
-
+        destfolder = Path(destfolder)
         total_cnt = 0
         total_sz = 0
         for f in root_folders:
@@ -366,40 +363,49 @@ class NTFS_Rescuer():
         processed_cnt = 0
         processed_sz = 0
 
-        def write_restore_cmd(outfile, sourcedevice, f_rec, destfolder):
+        def write_restore_cmd(outfile, sourcedevice, f_rec, target_folder: Path):
             nonlocal processed_cnt
             nonlocal processed_sz
             processed_cnt += 1
-            processed_sz += int(f_rec.size)
-            outputstring = f'echo "file {processed_cnt}/{total_cnt} ({100*processed_cnt/total_cnt:.2f}%) size {processed_sz}/{total_sz} ({100*processed_sz/total_sz:.2f}%) file {destfolder / f_rec.name}"'
+            sz = int(f_rec.size)
+            processed_sz += sz
+            outputstring = f'echo "file {processed_cnt}/{total_cnt} ({100*processed_cnt/total_cnt:.2f}%) size {sz//1024//1024}, total {processed_sz//1024//1024}/{total_sz//1024//1024}MB ({100*processed_sz/total_sz:.2f}%) file {target_folder / f_rec.name}"'
             outfile.write(outputstring + "\n")
-            outputstring = f'ntfsundelete {sourcedevice} -u -i {f_rec.iid} -o "{f_rec.name}" -d "{destfolder}"' # && echo \"" + fullpath + "\" >> ./success.txt || echo \"" + fullpath + "\" >> ./failed.txt'
+            # ntfsundelete truncates output path, so first restore file to short path, then move
+            outputstring = f'ntfsundelete {sourcedevice} -u -i {f_rec.iid} -o "{f_rec.name}" -d "{self.tmp_folder}"' # && echo \"" + fullpath + "\" >> ./success.txt || echo \"" + fullpath + "\" >> ./failed.txt'
+            outfile.write(outputstring + "\n")
+            outputstring = f'mv "{self.tmp_folder}"/* "{target_folder}"'
             outfile.write(outputstring + "\n")
 
-        def process_folder(outfile, sourcedevice, folder, destfolder):
-            destfolder = Path(destfolder)
-            fld_full_path = destfolder / folder.name
-            outputstring = f'mkdir "{fld_full_path}"'
+        def process_folder(outfile, sourcedevice, folder, parent_folder: Path):
+            target_folder = parent_folder / folder.name
+            outputstring = f'mkdir "{target_folder}"'
             outfile.write("\n\n" + outputstring + "\n")
             for f_rec in folder.files:
-                write_restore_cmd(outfile, sourcedevice, f_rec, fld_full_path)
+                write_restore_cmd(outfile, sourcedevice, f_rec, target_folder)
             for subfolder in folder.subfolders:
-                process_folder(outfile, sourcedevice, subfolder, fld_full_path)            
+                process_folder(outfile, sourcedevice, subfolder, target_folder)            
         
         with codecs.open(target_sh, 'w', encoding="utf-8") as outfile:
             outfile.write("#!/bin/bash\n")
+            outfile.write(f'mkdir -p "{self.tmp_folder}"\n')
+            outfile.write("\n")
             for folder in root_folders:
                 process_folder(outfile, sourcedevice, folder, destfolder)
 
         
 try:
-    
     sourcedevice="/dev/md1"
-    destfolder = '/mnt/tmpusb/restore_my'
-    inputfile = '/mnt/nvme/scan2.txt'
-    jsonfile = '/mnt/nvme/inodes2.json'
-    parsedfile = '/mnt/nvme/inodes-filtered2.json'
-    target_sh = '/mnt/tmpusb/restore.sh'
+    destfolder = './restore_my'
+    target_sh = destfolder + '/../restore.sh'
+
+    # create this file with command 'ntfsundelete <sourcedevice> -v -P > <inputfile>`
+    inputfile = destfolder + '/../scan2.txt'
+
+    # intermediate files
+    jsonfile = destfolder + '/../inodes2.json'
+    parsedfile = destfolder + '/../inodes-filtered2.json'
+
     
     # runtime action
     Rescuer = NTFS_Rescuer(destfolder)
